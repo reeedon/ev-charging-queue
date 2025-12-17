@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EV Charging Queue — 2 Tesla & 2 ChargePoint</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --muted: #57606a;
+      --success-bg: #dff6dd; /* green */
+      --success-border: #73be6f;
+      --danger-bg: #fde7e9; /* red */
+      --danger-border: #e83d3d;
+      --accent: #2563eb; /* blue */
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell,
+                   Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    header h1 { font-size: 1.25rem; margin: 0; }
+    header .meta { color: var(--muted); font-size: .95rem; }
+    header .actions { margin-left: auto; display: flex; gap: .5rem; }
+    button, select, input[type="text"], input[type="time"] {
+      font: inherit;
+      padding: .5rem .6rem;
+      border: 1px solid var(--border);
+      border-radius: .5rem;
+      background: #fff;
+    }
+    button {
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    button.secondary {
+      background: #fff; color: var(--text); border-color: var(--border);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr 1.2fr;
+      gap: 1rem;
+      padding: 1rem;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      padding: 1rem;
+    }
+
+    .panel h2 { margin: 0 0 .75rem 0; font-size: 1.05rem; }
+
+    /* Users panel */
+    #userForm { display: grid; grid-template-columns: 1fr 160px auto; gap: .5rem; }
+    #usersList, #queueList {
+      margin-top: .75rem;
+      display: flex; flex-direction: column; gap: .5rem;
+      min-height: 200px;
+      padding: .5rem;
+      border: 1px dashed var(--border);
+      border-radius: .5rem;
+    }
+
+    .user-item, .queue-item {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: .75rem;
+      padding: .5rem .6rem;
+      border: 1px solid var(--border);
+      border-radius: .5rem;
+      background: #fafafa;
+    }
+    .user-item[draggable="true"], .queue-item[draggable="true"] { cursor: grab; }
+    .name { font-weight: 600; }
+    .pref { color: var(--muted); font-size: .9rem; }
+
+    .drop-hint { color: var(--muted); text-align: center; font-size: .9rem; }
+
+    /* Chargers panel */
+    .chargers {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .75rem;
+    }
+    .spot {
+      border: 2px solid var(--success-border);
+      border-radius: .75rem;
+      padding: .75rem;
+      min-height: 120px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: .35rem;
+      transition: background .2s ease, border-color .2s ease;
+    }
+
+    .spot.free { background: var(--success-bg); border-color: var(--success-border); }
+    .spot.occupied { background: var(--danger-bg); border-color: var(--danger-border); }
+
+    .spot .title { font-weight: 700; }
+    .spot .occupant { display: flex; align-items: center; gap: .5rem; }
+    .spot .occupant .badge { border: 1px solid var(--border); padding: .1rem .4rem; border-radius: .4rem; font-size: .85rem; }
+
+    .spot .controls { display: flex; gap: .5rem; }
+
+    /* Queue panel */
+    .queue-header { display: flex; justify-content: space-between; align-items: baseline; }
+    .queue-actions { display: flex; gap: .5rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>EV Charging Queue</h1>
+    <div class="meta" id="resetInfo">Daily reset at <strong>6:00 AM</strong></div>
+    <div class="actions">
+      <button class="secondary" id="exportBtn" title="Download a backup of your data">Export Data</button>
+      <button class="secondary" id="importBtn" title="Import a backup">Import Data</button>
+      <input type="file" id="importFile" accept="application/json" style="display:none" />
+      <button class="secondary" id="resetNow">Reset Queue & Chargers</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Users panel -->
+    <section class="panel" id="usersPanel">
+      <h2>Users</h2>
+      <form id="userForm">
+        <input type="text" id="userName" placeholder="Full name" autocomplete="off" />
+        <select id="userPref" title="Charging preference">
+          <option value="both">Both</option>
+          <option value="tesla">Tesla only</option>
+          <option value="chargepoint">ChargePoint only</option>
+        </select>
+        <button type="submit">Add</button>
+      </form>
+
+      <div class="drop-hint">Drag a user from here into the Queue</div>
+      <div id="usersList"></div>
+    </section>
+
+    <!-- Chargers panel -->
+    <section class="panel" id="chargersPanel">
+      <h2>Chargers</h2>
+      <div class="chargers" id="chargersGrid">
+        <!-- Spots injected by JS -->
+      </div>
+    </section>
+
+    <!-- Queue panel -->
+    <section class="panel" id="queuePanel">
+      <div class="queue-header">
+        <h2>Queue</h2>
+        <div class="queue-actions">
+          <button class="secondary" id="clearQueue">Clear Queue</button>
+        </div>
+      </div>
+      <div class="drop-hint">Drop users here to join the queue (top = first)</div>
+      <div id="queueList"></div>
+    </section>
+  </main>
+
+  <script>
+    /* ---------------------------
+       State & Persistence
+       --------------------------- */
+    const LS_KEYS = {
+      users: 'ev_users',
+      queue: 'ev_queue',
+      spots: 'ev_spots',
+      lastReset: 'ev_lastReset'
+    };
+
+    // Initial chargers: 2 Tesla + 2 ChargePoint
+    const DEFAULT_SPOTS = [
+      { id: 'tesla-1', type: 'tesla', label: 'Tesla #1', userId: null },
+      { id: 'tesla-2', type: 'tesla', label: 'Tesla #2', userId: null },
+      { id: 'chargepoint-1', type: 'chargepoint', label: 'ChargePoint #1', userId: null },
+      { id: 'chargepoint-2', type: 'chargepoint', label: 'ChargePoint #2', userId: null },
+    ];
+
+    let users = [];
+    let queue = [];
+    let spots = JSON.parse(JSON.stringify(DEFAULT_SPOTS));
+    let nextUserId = 1;
+
+    function saveState() {
+      localStorage.setItem(LS_KEYS.users, JSON.stringify(users));
+      localStorage.setItem(LS_KEYS.queue, JSON.stringify(queue));
+      localStorage.setItem(LS_KEYS.spots, JSON.stringify(spots));
+      localStorage.setItem('ev_nextUserId', String(nextUserId));
+    }
+    function loadState() {
+      const u = localStorage.getItem(LS_KEYS.users);
+      const q = localStorage.getItem(LS_KEYS.queue);
+      const s = localStorage.getItem(LS_KEYS.spots);
+      const nid = localStorage.getItem('ev_nextUserId');
+      if (u) users = JSON.parse(u);
+      if (q) queue = JSON.parse(q);
+      if (s) spots = JSON.parse(s);
+      if (nid) nextUserId = parseInt(nid, 10) || 1;
+    }
+
+    /* ---------------------------
+       Reset at 6:00 AM (Local)
+       --------------------------- */
+    function todayAtSixAM() {
+      const now = new Date();
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 6, 0, 0, 0);
+      return d;
+    }
+    function nextSixAM() {
+      const now = new Date();
+      let next = todayAtSixAM();
+      if (now >= next) {
+        next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 6, 0, 0, 0);
+      }
+      return next;
+    }
+    function alreadyResetToday() {
+      const last = localStorage.getItem(LS_KEYS.lastReset);
+      if (!last) return false;
+      const lastDate = new Date(last);
+      // Was last reset on/after today's 6AM?
+      return lastDate >= todayAtSixAM();
+    }
+    function performDailyReset(manual = false) {
+      // Reset queue and clear chargers; keep users
+      queue = [];
+      spots = JSON.parse(JSON.stringify(DEFAULT_SPOTS));
+      localStorage.setItem(LS_KEYS.lastReset, new Date().toISOString());
+      saveState();
+      renderAll();
+      if (manual) alert('Queue and chargers have been reset.');
+    }
+    function scheduleResetWatcher() {
+      const infoEl = document.getElementById('resetInfo');
+      function updateInfo() {
+        const next = nextSixAM();
+        const now = new Date();
+        const diffMs = next - now;
+        const hours = Math.floor(diffMs / 3600000);
+        const mins = Math.floor((diffMs % 3600000) / 60000);
+        infoEl.innerHTML = `Daily reset at <strong>6:00 AM</strong> · Next in ${hours}h ${mins}m`;
+      }
+      updateInfo();
+      setInterval(() => {
+        updateInfo();
+        const now = new Date();
+        // Auto reset exactly once after 6AM
+        if (now >= todayAtSixAM() && !alreadyResetToday()) {
+          performDailyReset(false);
+        }
+      }, 30000); // check every 30s
+    }
+
+    /* ---------------------------
+       Helpers
+       --------------------------- */
+    function prefLabel(pref) {
+      switch(pref) {
+        case 'tesla': return 'Tesla only';
+        case 'chargepoint': return 'ChargePoint only';
+        default: return 'Both';
+      }
+    }
+    function typeEmoji(type) {
+      return type === 'tesla' ? '🚘' : '⚡';
+    }
+    function eligibleForType(pref, type) {
+      return pref === 'both' || pref === type;
+    }
+    function userById(id) { return users.find(u => u.id === id); }
+    function userIsInQueue(id) { return queue.some(q => q.userId === id); }
+    function userIsCharging(id) { return spots.some(s => s.userId === id); }
+
+    /* ---------------------------
+       Rendering
+       --------------------------- */
+    function renderUsers() {
+      const list = document.getElementById('usersList');
+      list.innerHTML = '';
+      users.forEach(u => {
+        const el = document.createElement('div');
+        el.className = 'user-item';
+        el.draggable = true;
+        el.dataset.userId = u.id;
+        el.innerHTML = `
+          <span class="name">${u.name}</span>
+          <span class="pref">${prefLabel(u.pref)}</span>
+          <div style="display:flex; gap:.25rem;">
+            <button class="secondary" data-action="remove">Remove</button>
+          </div>
+        `;
+        el.addEventListener('dragstart', onDragStartFromUsers);
+        el.querySelector('[data-action="remove"]').addEventListener('click', () => removeUser(u.id));
+        list.appendChild(el);
+      });
+    }
+
+    function renderQueue() {
+      const list = document.getElementById('queueList');
+      list.innerHTML = '';
+      queue.forEach((entry, idx) => {
+        const u = userById(entry.userId);
+        const el = document.createElement('div');
+        el.className = 'queue-item';
+        el.draggable = true;
+        el.dataset.userId = u.id;
+        el.innerHTML = `
+          <div style="display:flex; align-items:center; gap:.5rem;">
+            <span class="badge">#${idx+1}</span>
+            <span class="name">${u.name}</span>
+            <span class="pref">${prefLabel(u.pref)}</span>
+          </div>
+          <div style="display:flex; gap:.25rem;">
+            <button class="secondary" data-action="moveUp">↑</button>
+            <button class="secondary" data-action="moveDown">↓</button>
+            <button class="secondary" data-action="remove">Remove</button>
+          </div>
+        `;
+        el.addEventListener('dragstart', onDragStartFromQueue);
+        el.querySelector('[data-action="remove"]').addEventListener('click', () => removeFromQueue(u.id));
+        el.querySelector('[data-action="moveUp"]').addEventListener('click', () => moveQueue(u.id, -1));
+        el.querySelector('[data-action="moveDown"]').addEventListener('click', () => moveQueue(u.id, +1));
+        list.appendChild(el);
+      });
+
+      // Make queueList a drop target
+      const target = document.getElementById('queueList');
+      target.addEventListener('dragover', e => e.preventDefault());
+      target.addEventListener('drop', onDropToQueue);
+    }
+
+    function renderSpots() {
+      const grid = document.getElementById('chargersGrid');
+      grid.innerHTML = '';
+      spots.forEach(s => {
+        const u = s.userId ? userById(s.userId) : null;
+        const el = document.createElement('div');
+        el.className = 'spot ' + (u ? 'occupied' : 'free');
+        el.dataset.spotId = s.id;
+        el.innerHTML = `
+          <div class="title">${typeEmoji(s.type)} ${s.label}</div>
+          <div class="occupant">${u ? `<span class=\"name\">${u.name}</span><span class=\"badge\">${prefLabel(u.pref)}</span>` : '<em>Free</em>'}</div>
+          <div class="controls">${u ? '<button data-action="end">End Session</button>' : ''}</div>
+        `;
+        if (u) {
+          el.querySelector('[data-action="end"]').addEventListener('click', () => endSession(s.id));
+        }
+        grid.appendChild(el);
+      });
+    }
+
+    function renderAll() {
+      renderUsers();
+      renderQueue();
+      renderSpots();
+    }
+
+    /* ---------------------------
+       Users CRUD
+       --------------------------- */
+    function addUser(name, pref) {
+      name = (name || '').trim();
+      if (!name) { alert('Please enter a name.'); return; }
+      const newUser = { id: nextUserId++, name, pref };
+      users.push(newUser);
+      saveState();
+      renderUsers();
+    }
+    function removeUser(id) {
+      if (userIsCharging(id)) { alert('This user is currently charging. End the session first.'); return; }
+      removeFromQueue(id);
+      users = users.filter(u => u.id !== id);
+      saveState();
+      renderUsers();
+      renderQueue();
+    }
+
+    /* ---------------------------
+       Queue operations
+       --------------------------- */
+    function addToQueue(userId) {
+      if (userIsCharging(userId)) { alert('This user is already on a charger.'); return; }
+      if (userIsInQueue(userId)) { alert('This user is already in the queue.'); return; }
+      queue.push({ userId });
+      saveState();
+      renderQueue();
+      fillAvailableSpots();
+    }
+    function removeFromQueue(userId) {
+      queue = queue.filter(q => q.userId !== userId);
+      saveState();
+      renderQueue();
+    }
+    function moveQueue(userId, delta) {
+      const idx = queue.findIndex(q => q.userId === userId);
+      if (idx < 0) return;
+      const to = idx + delta;
+      if (to < 0 || to >= queue.length) return;
+      const [entry] = queue.splice(idx, 1);
+      queue.splice(to, 0, entry);
+      saveState();
+      renderQueue();
+    }
+
+    /* ---------------------------
+       Drag & Drop
+       --------------------------- */
+    function onDragStartFromUsers(e) {
+      const userId = e.currentTarget.dataset.userId;
+      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'user', userId }));
+    }
+    function onDragStartFromQueue(e) {
+      const userId = e.currentTarget.dataset.userId;
+      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'queue', userId }));
+    }
+    function onDropToQueue(e) {
+      e.preventDefault();
+      try {
+        const payload = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (payload.kind === 'user') {
+          addToQueue(parseInt(payload.userId, 10));
+        }
+      } catch(err) { /* ignore */ }
+    }
+
+    /* ---------------------------
+       Charger assignment
+       --------------------------- */
+    function endSession(spotId) {
+      const spot = spots.find(s => s.id === spotId);
+      if (!spot) return;
+      spot.userId = null;
+      saveState();
+      renderSpots();
+      // Auto-assign next in line
+      fillAvailableSpots();
+    }
+
+    function fillAvailableSpots() {
+      // Try to assign queue members to any free spot, preserving queue order
+      const freeSpots = spots.filter(s => !s.userId);
+      if (freeSpots.length === 0 || queue.length === 0) return;
+
+      // For each free spot, pick the first eligible user in queue
+      freeSpots.forEach(spot => {
+        const idx = queue.findIndex(q => eligibleForType(userById(q.userId).pref, spot.type));
+        if (idx >= 0) {
+          const entry = queue.splice(idx, 1)[0];
+          spot.userId = entry.userId;
+        }
+      });
+      saveState();
+      renderQueue();
+      renderSpots();
+    }
+
+    /* ---------------------------
+       Export / Import
+       --------------------------- */
+    function exportData() {
+      const data = {
+        users, queue, spots,
+        nextUserId,
+        lastReset: localStorage.getItem(LS_KEYS.lastReset) || null
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ev-charging-backup.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    function importData(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          users = Array.isArray(data.users) ? data.users : [];
+          queue = Array.isArray(data.queue) ? data.queue : [];
+          spots = Array.isArray(data.spots) ? data.spots : JSON.parse(JSON.stringify(DEFAULT_SPOTS));
+          nextUserId = Number.isInteger(data.nextUserId) ? data.nextUserId : (users.reduce((m,u)=>Math.max(m,u.id),0)+1);
+          if (data.lastReset) localStorage.setItem(LS_KEYS.lastReset, data.lastReset);
+          saveState();
+          renderAll();
+        } catch(err) {
+          alert('Invalid backup file.');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    /* ---------------------------
+       Wire up UI
+       --------------------------- */
+    function init() {
+      loadState();
+      // On load, if it's after 6AM and not reset yet, do reset
+      if ((new Date()) >= todayAtSixAM() && !alreadyResetToday()) {
+        performDailyReset(false);
+      }
+      renderAll();
+      scheduleResetWatcher();
+
+      // Form handlers
+      document.getElementById('userForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = document.getElementById('userName').value;
+        const pref = document.getElementById('userPref').value;
+        addUser(name, pref);
+        document.getElementById('userName').value = '';
+        document.getElementById('userPref').value = 'both';
+      });
+
+      // Queue actions
+      document.getElementById('clearQueue').addEventListener('click', () => {
+        queue = [];
+        saveState();
+        renderQueue();
+      });
+
+      // Reset now
+      document.getElementById('resetNow').addEventListener('click', () => performDailyReset(true));
+
+      // Export / Import
+      const exportBtn = document.getElementById('exportBtn');
+      const importBtn = document.getElementById('importBtn');
+      const importFile = document.getElementById('importFile');
+      exportBtn.addEventListener('click', exportData);
+      importBtn.addEventListener('click', () => importFile.click());
+      importFile.addEventListener('change', () => {
+        if (importFile.files && importFile.files[0]) importData(importFile.files[0]);
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
